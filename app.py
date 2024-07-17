@@ -179,8 +179,10 @@ class TokenizerTransformer(BaseEstimator, TransformerMixin):
 class LowercaseTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, to_low):
         self.to_low = to_low
+
     def fit(self, x, y=None):
         return self
+
     def transform(self, x):
         return [self.to_low(w) for w in x]
 
