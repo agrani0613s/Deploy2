@@ -9,19 +9,19 @@ from nltk.tokenize import word_tokenize
 from collections import defaultdict
 import numpy as np
 import pandas as pd
-# ghhc
+import joblib
+from flask import Flask, request, jsonify
+
+# Define all custom transformers and necessary functions
+
 def text_to_dictionary(text):
     abbreviation_dict = {}
-    lines = text.strip().split('\n')  # Split the text into lines
-    
+    lines = text.strip().split('\n')
     for line in lines:
-        # Split the line into abbreviation and meaning
         abbreviation, meaning = line.split('=')
         abbreviation_dict[abbreviation.strip()] = meaning.strip()
-    
     return abbreviation_dict
 
-# Example text with abbreviations and meanings
 text = '''
 AFAIK=As Far As I Know
 AFK=Away From Keyboard
@@ -93,18 +93,16 @@ W8=Wait...
 7K=Sick:-D Laugher
 '''
 
-# Convert the text into a dictionary
 abbreviation_dictionary = text_to_dictionary(text)
-
 
 def to_low(x):
     return str(x).lower()
     
 def remove_pun(x):
-    return x.translate(str.maketrans('','',string.punctuation))
+    return x.translate(str.maketrans('', '', string.punctuation))
 
 def chat_con(text):
-    new_text=[]
+    new_text = []
     for w in text.split():
         if w.upper() in abbreviation_dictionary:
             new_text.append(abbreviation_dictionary[w.upper()])
@@ -128,46 +126,42 @@ def remove_stopwords(text):
     stop_words = set(stopwords.words('english'))
     words = text.split()
     filtered_words = [word for word in words if word.lower() not in stop_words]
-    filtered_text = ' '.join(filtered_words)
-    return filtered_text
+    return ' '.join(filtered_words)
 
 def tokeizer(x):
     return word_tokenize(str(x))
 
 class RemovePunTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self,remove_pun):
-        self.remove_pun=remove_pun
-    def fit(self,x,y=None):
+    def __init__(self, remove_pun):
+        self.remove_pun = remove_pun
+    def fit(self, x, y=None):
         return self
     def transform(self, x):
-        return[self.remove_pun(w) for w in x]
+        return [self.remove_pun(w) for w in x]
 
 class RemoveAbbreviationTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self,chat_con):
-        self.chat_con=chat_con
-    def fit(self,x,y=None):
+    def __init__(self, chat_con):
+        self.chat_con = chat_con
+    def fit(self, x, y=None):
         return self
     def transform(self, x):
-        return[self.chat_con(w) for w in x]
+        return [self.chat_con(w) for w in x]
 
 class RemoveStopwordsTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self,remove_stopwords):
-        self.remove_stopwords=remove_stopwords
-    def fit(self,x,y=None):
+    def __init__(self, remove_stopwords):
+        self.remove_stopwords = remove_stopwords
+    def fit(self, x, y=None):
         return self
     def transform(self, x):
-        return[self.remove_stopwords(w) for w in x]
+        return [self.remove_stopwords(w) for w in x]
 
 class Lemmatizer(BaseEstimator, TransformerMixin):
     def __init__(self):
         self.lemmatizer = nltk.WordNetLemmatizer()
-    
     def fit(self, X, y=None):
         return self
-    
     def transform(self, X, y=None):
         return [self.lemmatize_sentence(sentence) for sentence in X]
-    
     def lemmatize_sentence(self, sentence):
         words = word_tokenize(sentence)
         pos_tags = nltk.pos_tag(words)
@@ -175,20 +169,18 @@ class Lemmatizer(BaseEstimator, TransformerMixin):
         return ' '.join(lemmatized_words)
 
 class TokenizerTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self,tokeizer):
-        self.tokeizer=tokeizer
-    def fit(self,x,y=None):
+    def __init__(self, tokeizer):
+        self.tokeizer = tokeizer
+    def fit(self, x, y=None):
         return self
     def transform(self, x):
-        return[self.tokeizer(w) for w in x]
+        return [self.tokeizer(w) for w in x]
     
 class LowercaseTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, to_low):
         self.to_low = to_low
-
     def fit(self, x, y=None):
         return self
-
     def transform(self, x):
         return [self.to_low(w) for w in x]
 
@@ -197,7 +189,6 @@ class EmotionAnalyzer(BaseEstimator, TransformerMixin):
         self.csv_file = csv_file
         self.threshold = threshold
         self.emotion_dict, self.emotions = self._load_emotion_mappings()
-        
     def _load_emotion_mappings(self):
         emotion_dict = {}
         with open(self.csv_file, 'r', encoding='utf-8') as file:
@@ -207,31 +198,24 @@ class EmotionAnalyzer(BaseEstimator, TransformerMixin):
                 word = row['English Word'].lower()
                 emotion_dict[word] = {emotion: int(row[emotion]) for emotion in emotions}
         return emotion_dict, emotions
-    
     def fit(self, X, y=None):
         return self
-    
     def transform(self, X):
         return [self._analyze_tokens(tokens) for tokens in X]
-    
     def _analyze_tokens(self, tokens):
         total_scores = defaultdict(int)
         word_count = 0
-        
         for token in tokens:
             if token.lower() in self.emotion_dict:
                 word_count += 1
                 for emotion in self.emotions:
                     total_scores[emotion] += self.emotion_dict[token.lower()][emotion]
-        
         if word_count > 0:
             avg_scores = {emotion: total_scores[emotion] / word_count for emotion in self.emotions}
         else:
             avg_scores = {emotion: 0 for emotion in self.emotions}
-        
         emotion_vector = [1 if avg_scores[emotion] > self.threshold else 0 for emotion in self.emotions]
         return emotion_vector
-
 
 class SequentialPredictor(BaseEstimator, ClassifierMixin):
     def __init__(self, model1, model2, pivot_matrix, n_neighbors=6):
@@ -239,33 +223,22 @@ class SequentialPredictor(BaseEstimator, ClassifierMixin):
         self.model2 = model2
         self.pivot_matrix = pivot_matrix
         self.n_neighbors = n_neighbors
-
     def fit(self, X, y=None):
         return self
-
     def predict(self, X):
         # Get predictions from model1 (SVM)
         svm_pred = self.model1.predict(X)
-        
         # Convert SVM predictions to integers
         svm_pred_int = np.array([int(pred) for pred in svm_pred])
-        
         # Ensure that the indices are within the bounds of the pivot_matrix
         svm_pred_int = np.clip(svm_pred_int, 0, len(self.pivot_matrix) - 1)
-        
         # Use the indices to get the corresponding rows from the recommendation matrix
         knn_input = self.pivot_matrix.iloc[svm_pred_int].values
-        
         # Use the mapped SVM predictions to find nearest neighbors
         distances, indices = self.model2.kneighbors(knn_input, n_neighbors=self.n_neighbors)
-        
         # Return the URLs of the nearest neighbors
         nearest_urls = [self.pivot_matrix.index[idx] for idx in indices.flatten()]
         return nearest_urls
-
-
-import joblib
-from flask import Flask, request, jsonify
 
 # Load the recommendation system from the pickle file
 recommendation_system = joblib.load("model.joblib")
